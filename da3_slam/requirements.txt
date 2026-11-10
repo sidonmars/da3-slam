@@ -1,0 +1,20 @@
+# Install PyTorch for your CUDA first (https://pytorch.org/get-started/locally/), then
+#   pip install -r da3_slam/requirements.txt && bash da3_slam/thirdparty/build.sh
+torch>=2.3
+torchvision
+numpy<2
+scipy
+opencv-python<4.12    # 4.12+ needs numpy 2
+pillow
+pyyaml
+omegaconf
+einops
+safetensors
+huggingface_hub<1     # 1.x drops huggingface-cli
+addict
+imageio
+trimesh
+tqdm
+evo
+matplotlib
+g2o-python==0.0.15    # Sim(3) pose graph

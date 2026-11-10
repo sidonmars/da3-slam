@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+*.so
+*.log
+
+# local data, weights and results
+/data/
+/outputs/
+/checkpoints/*
+!/checkpoints/download.sh
+*.pth
+*.pt
+*.ckpt
+
+# native builds: produced by thirdparty/build.sh
+/thirdparty/DBoW2/build/
+/thirdparty/DBoW2/install/
+/thirdparty/DPRetrieval/build/
+/thirdparty/ALIKED/custom_ops/build/

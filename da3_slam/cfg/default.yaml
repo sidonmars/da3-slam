@@ -1,0 +1,213 @@
+# da3_slam defaults. A run config `_include`s this and adds a `dataset` section.
+device: cuda
+sensor: mono                  # mono | stereo: stereo scales each submap to metres
+
+model:
+  name: da3                   # da3_slam.model.MODELS
+  ckpt: null                  # local path or Hugging Face id; null: the model's default
+  fp32: false                 # keep the transformer encoder in fp32 (default bf16)
+
+frontend:
+  ckpt: 'depth-anything/DA3-SMALL'   # '': track with the backend model
+  context: 2                  # recent frames beside the keyframe (0: keyframe + new frame only)
+  every: 1                    # track every n-th frame; the others hold the last pose and go
+                              # unscored for keyframe selection (the fused result is unaffected)
+  ref: first
+  min_overlap: 0.35           # promote a keyframe below this overlap, or after one backend step
+  scale_refs: anchored        # anchored: scale only from backend-anchored cameras | all: every camera
+  anchor_min_gap: 8           # preferred distance of the second scale reference behind the keyframe
+  reanchor_transform: true    # carry each re-anchor's Sim(3) into every stored pose
+
+backend:
+  frame_stride: 4
+  frame_rate: 10              # Hz the stride is defined at
+  views: 24                   # frames the model sees per submap
+  new_views: 8                # new views per submap
+  ref_view_strategy: middle
+  pixel_target: 3000          # points kept per frame for alignment
+  edge_weight_floor: 0.25     # frame weight at a submap's edge relative to its centre
+  align:
+    conf_rel: 0.1
+    huber_rel: 0.1
+    max_iters: 10
+    min_points: 2000
+    min_shared_frames: 4
+    max_pair_span: 2          # also align submaps k-2 .. k that share frames
+    extra_weight: 0.7         # legacy weight of a span edge
+  refine:                     # local bundle adjustment inside each submap (ALIKED tracks,
+    enable: false             # reprojection error, the model's depth and poses as priors)
+    pairs_max_gap: 4          # keyframes matched up to this many steps apart
+    ratio: 0.9                # descriptor ratio test
+    reproj_px: 3.0            # a match must agree with the model's geometry to this
+    track_depth_range: [0.05, 5.0]   # observations outside this times the median depth are dropped
+    track_point_tol: 0.1      # ... or whose model point is farther than this times its depth
+                              #     from the track's median point
+    min_track: 3              # keyframes a point must be seen in
+    max_points: 4000
+    min_points: 50            # fewer tracks: the submap is left as the model gave it
+    huber_px: 2.0
+    depth_prior_std: 0.05     # std of log depth against the model's depth, at unit confidence
+    pose_prior_rot_deg: 1.0   # std of a pose against the model's pose
+    pose_prior_trans_rel: 0.05  # ... in units of the median keyframe baseline
+    iters: 8
+    covis:                    # ALIKED settings for the tracks
+      ratio: 0.9
+      ransac_px: 3.0
+      max_corners: 1024
+      aliked_score: 0.2
+  loop_half_window: 10        # frames per side of a loop window
+  pair_ref_view_strategy: first   # reference view of a loop-window pass
+
+  # Sparse long-context mapping: one pass over a window of submaps, edges between the
+  # far-apart ones.
+  long_context:
+    enable: true
+    nodes_per_window: 8       # submaps one window spans
+    every_nodes: 4            # advance between windows
+    max_residual_rel: 0.15
+    weight: 0.5               # legacy weight of a long-context edge
+    min_conf_ratio: 0.7       # window confidence relative to the local submaps
+    min_covis: 0.20           # covisibility an edge's two spans must share (0: no ALIKED gate)
+    covis_stat: frac_strong
+    covis_strong_at: 0.05
+    covis:
+      ratio: 0.9
+      ransac_px: 3.0
+      max_corners: 1024
+      aliked_score: 0.2
+
+  # Loop verification and the loop edges.
+  loop:
+    weight: 5.0               # legacy weight of a loop edge
+    cauchy: false             # Cauchy instead of Huber on loop edges
+    max_residual_rel: 0.08    # per-end fit residual
+    min_overlap: 0.25         # voxel overlap of the two ends
+    anchor_search: 3          # window shifts tried when a placement fails; 0 disables
+    max_drift_chi: 10         # correction vs the chain's own drift; 0 disables
+    max_rot_drift_sqrt: 20    # deg per sqrt(submap steps); 0 disables
+    voxel_rel: 0.02
+    conf_rel: 0.5
+    online: false             # also solve at every accepted loop and correct the front-end
+
+  metric_depth:               # stereo: one robust scale per submap from the sensor depth
+    trim: 0.15                # tail fraction dropped from each frame's depth ratios
+    min_pixels: 2000          # a frame with fewer valid pixels does not vote
+    conf_rel: 0.1             # only pixels the model is confident about
+    depth_weight: inv_sq      # 1/z^2 weighting of the ratios
+    min_frames: 3             # fewer voting frames leaves the submap up to scale
+    max_spread: 0.35          # frames disagreeing more than this leave it up to scale
+    inlier_tol: 0.05          # |log ratio| counted as explained by the scale
+    min_inlier_frac: 0.50     # fraction of a frame the scale must explain
+    fix_scale: true           # metric-to-metric edges fix s = 1
+  imu:                        # with a dataset that provides an IMU (EuRoC)
+    enable: true              # attach the IMU at all
+    rotation_edges: false     # gyro rotation factors between submaps: pair with
+                              # graph.weighting: info; under legacy weighting vision carries no
+                              # rotation weight and the gyro's residual bias drift wins
+    rot_floor_deg: 0.05       # std floor on the preintegrated rotation between nodes
+    gyro_bias: [0.0, 0.0, 0.0]
+    accel_bias: [0.0, 0.0, 0.0]
+    noise: null               # {gyro_std, accel_std, gyro_bias_rw, accel_bias_rw}; null: sensor.yaml
+    bias_estimate: true       # gyro bias from the visual rotations of consecutive submaps
+    bias_window: 20           # submap pairs the estimate is formed over
+    bias_min_edges: 5         # pairs needed before IMU edges enter the graph
+    bias_vis_std_deg: 0.3     # assumed noise of a visual relative rotation
+    bias_huber_deg: 1.0       # robust threshold on a pair's disagreement
+    init:                     # ORB-SLAM3 inertial-only initialization, run on the final trajectory
+      enable: true
+      kf_every: 8             # frames between inertial keyframes
+      min_time: 2.0           # seconds of trajectory needed
+      stages: [[100.0, 1.0e10], [1.0, 1.0e5], [0.0, 0.0]]   # (gyro, accel) bias prior information
+      max_iters: 50
+      cov_floor: [1.0e-8, 1.0e-6, 1.0e-6]   # added to the rotation / velocity / position variances
+      g: 9.81
+      apply: true             # rescale the trajectory to metres and align gravity with -z
+      fix_scale: false        # true: keep the depth sensor's scale when any submap is metric. The
+                              # world follows submap 0, which need not be metric, and stereo's own
+                              # scale is biased: on EuRoC the IMU's scale is better (SE(3) ATE
+                              # mean 0.15 m free vs 1.33 m fixed)
+    ba:                       # ORB-SLAM3 FullInertialBA over the inertial keyframes, after init
+      enable: true
+      iters: 15
+      span: 2                 # visual relative-pose edges between keyframes up to this far apart
+      vis_trans_rel: 0.02     # visual edge translation std, relative to its baseline
+      vis_trans_floor: 0.005  # ... and its floor in metres
+      vis_rot_deg: 0.2        # visual edge rotation std
+      huber: 0.0              # Huber width on sqrt(chi2) of the visual edges; 0: none
+      prior_g: 0.0            # bias priors on the first keyframe (information); ORB-SLAM3 keeps
+      prior_a: 0.0            # them only in the early initializations, the biases are free here
+      gravity_free: false     # refine the gravity direction in the BA (ORB-SLAM3 fixes it; on
+                              # MH_01 freeing it over-corrects the tilt)
+      noise_scale: 10.0       # inflate the IMU noise densities (datasheet values are optimistic)
+      g: 9.81
+      cov_floor: [1.0e-8, 1.0e-6, 1.0e-6]
+
+graph:
+  weighting: legacy           # legacy: fixed per-kind edge weights and baseline whitening
+                              # info:   7x7 information per edge from the alignment itself
+  huber: 2.0                  # legacy: Huber width on the whitened residual norm; 0: none
+  iters: 25
+  per_edge_trans: true        # legacy: whiten translation by each edge's own baseline
+  per_edge_floor: 0.25
+  info:
+    huber: 3.5                # info: Huber width on sqrt(chi2); chi2 ~ chi-square(7) for inliers
+    min_frames: 3             # fewer shared frames: the floors alone set the information
+    trans_floor_rel: 0.02     # std floor on translation, relative to the edge's median baseline
+    rot_floor_deg: 0.1        # std floor on rotation
+    scale_floor: 0.005        # std floor on log scale
+    metric_scale_std: 0.01    # std of log scale between two metric submaps (fix_scale edges)
+    max_std_rel: 1.0          # cap on translation std relative to the baseline (weakest edge)
+  dump: false                 # write graph_<seq>.npz into the output directory
+
+# Traversability map for a wheeled robot. The robot limits are assumptions until measured.
+traversability:
+  enable: false
+  cell: 0.2                   # m
+  max_range: 12.0             # m; KITTI's ground resolution is about one cell per row at 10 m
+  max_step: 0.10              # m the wheels can climb
+  max_slope_deg: 20.0
+  max_roughness: 0.10         # m, height spread inside a cell
+  clearance: 1.0              # m; points above this cannot hit the robot
+  robot_width: 0.6            # m
+  inflation_margin: 0.1       # m added around obstacles for planning
+  camera_height: null         # m above ground; sets scale for non-metric submaps
+  pixel_stride: 2
+  conf_rel: 0.5               # drop points below this fraction of the median confidence
+  edge_rtol: 0.03             # drop depth-edge pixels
+  min_cell_points: 3
+  low_quantile: 0.2
+  high_quantile: 0.9
+  obstacle_vote: 0.3          # fraction of a cell's evidence that makes it an obstacle
+  ground_image_fraction: 0.5  # ground candidates come from below this image row fraction
+  plane_iters: 200
+  plane_tol_rel: 0.01
+  plane_max_tilt_deg: 25.0
+  plane_max_points: 20000
+
+output:
+  dir: null                   # default outputs/da3_slam_<dataset>
+  save_online: true           # also score the front-end's online trajectory
+  verbose: true
+
+# Loop retrieval (phase 3); the verification and long-context settings sit under backend.
+retrieval:
+  enable: true              # false: no loop closure
+  method: dbow              # dbow | salad | megaloc
+  probe_every: 5            # query every n-th frame
+  min_frame_gap: 100        # frames before a match can count as a revisit
+  nms: 25                   # suppression radius around a closure, in probes
+  dbow:
+    vocab: checkpoints/ORBvoc.txt
+    thresh: 0.02
+    num_repeat: 2
+    island_k: 6
+    island_min: 4
+    island_radius: 12
+    island_floor: 0.5
+  salad:
+    ckpt: checkpoints/dino_salad.ckpt
+    image_size: [322, 322]
+    similarity_threshold: 0.85
+  megaloc:
+    image_size: [322, 322]
+    similarity_threshold: 0.55

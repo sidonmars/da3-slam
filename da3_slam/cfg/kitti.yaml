@@ -1,0 +1,14 @@
+_include: [default]
+
+dataset:
+  name: kitti
+  root: data/kitti
+  gray: false                 # image_0/image_1 instead of image_2/image_3
+  scenes: ['03', '04']
+  stride: null                # dataset default
+  max_frames: null
+  calib: false                # give the system the dataset's intrinsics
+  fps: null                   # dataset's own rate
+
+output:
+  dir: outputs/da3_slam_kitti

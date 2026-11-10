@@ -1,0 +1,13 @@
+_include: [default]
+
+dataset:
+  name: euroc
+  root: data/euroc
+  scenes: ['MH_01_easy']
+  stride: null
+  max_frames: null
+  calib: false
+  fps: null                   # 20 Hz: frame_stride stays 4 (capped at backend.frame_rate)
+
+output:
+  dir: outputs/da3_slam_euroc
